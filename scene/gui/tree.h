@@ -136,6 +136,7 @@ private:
 	Vector<Cell> cells;
 
 	bool collapsed; // won't show children
+	bool visible;
 	bool disable_folding;
 	int custom_min_height;
 
@@ -170,6 +171,10 @@ protected:
 	}
 
 	Variant _call_recursive_bind(const Variant **p_args, int p_argcount, Variant::CallError &r_error);
+
+private:
+	TreeItem *_get_prev_visible(bool p_wrap = false);
+	TreeItem *_get_next_visible(bool p_wrap = false);
 
 public:
 	/* cell mode */
@@ -227,6 +232,9 @@ public:
 	void set_collapsed(bool p_collapsed);
 	bool is_collapsed();
 
+	void set_visible(bool p_visible);
+	bool is_visible();
+
 	void set_custom_minimum_height(int p_height);
 	int get_custom_minimum_height() const;
 
@@ -239,6 +247,7 @@ public:
 	TreeItem *get_next_visible(bool p_wrap = false);
 
 	void remove_child(TreeItem *p_item);
+	int get_visible_child_count();
 
 	void set_selectable(int p_column, bool p_selectable);
 	bool is_selectable(int p_column) const;

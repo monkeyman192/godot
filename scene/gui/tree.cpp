@@ -322,6 +322,21 @@ bool TreeItem::is_collapsed() {
 	return collapsed;
 }
 
+void TreeItem::set_visible(bool p_visible) {
+	if (visible == p_visible) {
+		return;
+	}
+	visible = p_visible;
+	if (tree) {
+		tree->update();
+		_changed_notify();
+	}
+}
+
+bool TreeItem::is_visible() {
+	return visible;
+}
+
 void TreeItem::set_custom_minimum_height(int p_height) {
 	custom_min_height = p_height;
 	_changed_notify();
@@ -356,7 +371,7 @@ TreeItem *TreeItem::get_children() {
 	return children;
 }
 
-TreeItem *TreeItem::get_prev_visible(bool p_wrap) {
+TreeItem *TreeItem::_get_prev_visible(bool p_wrap) {
 	TreeItem *current = this;
 
 	TreeItem *prev = current->get_prev();
@@ -392,7 +407,21 @@ TreeItem *TreeItem::get_prev_visible(bool p_wrap) {
 	return current;
 }
 
-TreeItem *TreeItem::get_next_visible(bool p_wrap) {
+TreeItem *TreeItem::get_prev_visible(bool p_wrap) {
+	TreeItem *loop = this;
+	TreeItem *prev = this->_get_prev_visible(p_wrap);
+	while (prev && !prev->is_visible()) {
+		prev = prev->_get_prev_visible(p_wrap);
+		if (prev == loop) {
+			// Check that we haven't looped all the way around to the start.
+			prev = nullptr;
+			break;
+		}
+	}
+	return prev;
+}
+
+TreeItem *TreeItem::_get_next_visible(bool p_wrap) {
 	TreeItem *current = this;
 
 	if (!current->collapsed && current->children) {
@@ -417,6 +446,34 @@ TreeItem *TreeItem::get_next_visible(bool p_wrap) {
 	}
 
 	return current;
+}
+
+TreeItem *TreeItem::get_next_visible(bool p_wrap) {
+	TreeItem *loop = this;
+	TreeItem *next = this->_get_next_visible(p_wrap);
+	while (next && !next->is_visible()) {
+		next = next->_get_next_visible(p_wrap);
+		if (next == loop) {
+			// Check that we haven't looped all the way around to the start.
+			next = nullptr;
+			break;
+		}
+	}
+	return next;
+}
+
+int TreeItem::get_visible_child_count() {
+	int visible_count = 0;
+	if (this->children) {
+		TreeItem *child = this->children;
+		while (child) {
+			if (child->is_visible()) {
+				visible_count += 1;
+			}
+			child = child->next;
+		}
+	}
+	return visible_count;
 }
 
 void TreeItem::remove_child(TreeItem *p_item) {
@@ -742,6 +799,9 @@ void TreeItem::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_collapsed", "enable"), &TreeItem::set_collapsed);
 	ClassDB::bind_method(D_METHOD("is_collapsed"), &TreeItem::is_collapsed);
 
+	ClassDB::bind_method(D_METHOD("set_visible", "enable"), &TreeItem::set_visible);
+	ClassDB::bind_method(D_METHOD("is_visible"), &TreeItem::is_visible);
+
 	ClassDB::bind_method(D_METHOD("set_custom_minimum_height", "height"), &TreeItem::set_custom_minimum_height);
 	ClassDB::bind_method(D_METHOD("get_custom_minimum_height"), &TreeItem::get_custom_minimum_height);
 
@@ -809,6 +869,7 @@ void TreeItem::_bind_methods() {
 	}
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collapsed"), "set_collapsed", "is_collapsed");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "visible"), "set_visible", "is_visible");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "disable_folding"), "set_disable_folding", "is_folding_disabled");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "custom_minimum_height", PROPERTY_HINT_RANGE, "0,1000,1"), "set_custom_minimum_height", "get_custom_minimum_height");
 
@@ -838,6 +899,7 @@ void TreeItem::clear_children() {
 TreeItem::TreeItem(Tree *p_tree) {
 	tree = p_tree;
 	collapsed = false;
+	visible = true;
 	disable_folding = false;
 	custom_min_height = 0;
 
@@ -938,7 +1000,7 @@ void Tree::update_cache() {
 }
 
 int Tree::compute_item_height(TreeItem *p_item) const {
-	if (p_item == root && hide_root) {
+	if ((p_item == root && hide_root) || !p_item->is_visible()) {
 		return 0;
 	}
 
@@ -995,6 +1057,9 @@ int Tree::compute_item_height(TreeItem *p_item) const {
 }
 
 int Tree::get_item_height(TreeItem *p_item) const {
+	if (!p_item->is_visible()) {
+		return 0;
+	}
 	int height = compute_item_height(p_item);
 	height += cache.vseparation;
 
@@ -1065,6 +1130,10 @@ void Tree::draw_item_rect(const TreeItem::Cell &p_cell, const Rect2i &p_rect, co
 int Tree::draw_item(const Point2i &p_pos, const Point2 &p_draw_ofs, const Size2 &p_draw_size, TreeItem *p_item) {
 	if (p_pos.y - cache.offset.y > (p_draw_size.height)) {
 		return -1; //draw no more!
+	}
+
+	if (!p_item->is_visible()) {
+		return 0;
 	}
 
 	RID ci = get_canvas_item();
@@ -1393,7 +1462,7 @@ int Tree::draw_item(const Point2i &p_pos, const Point2 &p_draw_ofs, const Size2 
 			}
 		}
 
-		if (!p_item->disable_folding && !hide_folding && p_item->children) { //has children, draw the guide box
+		if (!p_item->disable_folding && !hide_folding && p_item->children && p_item->get_visible_child_count() != 0) { //has visible children, draw the guide box
 
 			Ref<Texture> arrow;
 
@@ -1430,12 +1499,12 @@ int Tree::draw_item(const Point2i &p_pos, const Point2 &p_draw_ofs, const Size2 
 			}
 
 			// Draw relationship lines.
-			if (cache.draw_relationship_lines > 0 && (!hide_root || c->parent != root)) {
+			if (cache.draw_relationship_lines > 0 && (!hide_root || c->parent != root) && c->is_visible()) {
 				int root_ofs = children_pos.x + ((p_item->disable_folding || hide_folding) ? cache.hseparation : cache.item_margin);
 				int parent_ofs = p_pos.x + ((p_item->disable_folding || hide_folding) ? cache.hseparation : cache.item_margin);
 				Point2i root_pos = Point2i(root_ofs, children_pos.y + label_h / 2) - cache.offset + p_draw_ofs;
 
-				if (c->get_children() != nullptr) {
+				if (c->get_visible_child_count() > 0) {
 					root_pos -= Point2i(cache.arrow->get_width(), 0);
 				}
 
@@ -1637,6 +1706,11 @@ void Tree::_range_click_timeout() {
 }
 
 int Tree::propagate_mouse_event(const Point2i &p_pos, int x_ofs, int y_ofs, bool p_doubleclick, TreeItem *p_item, int p_button, const Ref<InputEventWithModifiers> &p_mod) {
+	if (p_item && !p_item->is_visible()) {
+		// Skip any processing of invisible items.
+		return 0;
+	}
+
 	int item_h = compute_item_height(p_item) + cache.vseparation;
 
 	bool skip = (p_item == root && hide_root);
@@ -3433,7 +3507,7 @@ Point2 Tree::get_scroll() const {
 }
 
 void Tree::scroll_to_item(TreeItem *p_item) {
-	if (!is_visible_in_tree()) {
+	if (!is_visible_in_tree() || !p_item->is_visible()) {
 		// hack to work around crash in get_item_rect() if Tree is not in tree.
 		return;
 	}
@@ -3531,7 +3605,7 @@ void Tree::_do_incr_search(const String &p_add) {
 TreeItem *Tree::_find_item_at_pos(TreeItem *p_item, const Point2 &p_pos, int &r_column, int &h, int &section) const {
 	Point2 pos = p_pos;
 
-	if (root != p_item || !hide_root) {
+	if ((root != p_item || !hide_root) && p_item->is_visible()) {
 		h = compute_item_height(p_item) + cache.vseparation;
 		if (pos.y < h) {
 			if (drop_mode_flags == DROP_MODE_ON_ITEM) {
@@ -3564,7 +3638,7 @@ TreeItem *Tree::_find_item_at_pos(TreeItem *p_item, const Point2 &p_pos, int &r_
 		h = 0;
 	}
 
-	if (p_item->is_collapsed()) {
+	if (p_item->is_collapsed() || !p_item->is_visible()) {
 		return nullptr; // do not try children, it's collapsed
 	}
 
